@@ -513,6 +513,45 @@ async function notifyAttendanceToGroup(log) {
 // ----------------- start server -----------------
 
 const port = process.env.PORT || 3000;
+// route ทดสอบเฉย ๆ
+app.get("/", (req, res) => {
+  res.send("LINE bot is running");
+});
+
+// ส่งข้อความตอนเช้า (ทดสอบ)
+app.get("/cron/morning", async (req, res) => {
+  try {
+    await client.pushMessage(process.env.LINE_GROUP_ID, {
+      type: "text",
+      text: "ทดสอบ /cron/morning: บอทส่งข้อความเข้ากลุ่มได้แล้ว ✅",
+    });
+    res.send("ok");
+  } catch (err) {
+    console.error("cron/morning error:", err);
+    res.status(500).send("error");
+  }
+});
+
+// สรุปผล (ไว้ทีหลังค่อยทำ logic จริง)
+app.get("/cron/summary", async (req, res) => {
+  try {
+    await client.pushMessage(process.env.LINE_GROUP_ID, {
+      type: "text",
+      text: "ทดสอบ /cron/summary: สรุปการมาเรียน (ยังเป็น dummy)",
+    });
+    res.send("ok");
+  } catch (err) {
+    console.error("cron/summary error:", err);
+    res.status(500).send("error");
+  }
+});
+
+// อันนี้น่าจะมีอยู่แล้ว ถ้าไม่มีให้ใส่
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("LINE bot running on port", PORT);
+});
+
 app.listen(port, () => {
   console.log("LINE bot running on port " + port);
 });

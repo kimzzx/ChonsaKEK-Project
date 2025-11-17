@@ -24,6 +24,77 @@ app.use(express.json());
 // ตัว client ที่เอาไว้ใช้ push / reply หา LINE
 const client = new line.Client(config);
 
+async function sendMorningPromptToGroup() {
+  const groupId = process.env.LINE_GROUP_ID;
+  if (!groupId) {
+    console.error("LINE_GROUP_ID is not set");
+    return;
+  }
+
+  const message = {
+    type: "flex",
+    altText: "เช็คชื่อเช้านี้ (แจ้งลา / แจ้งเข้าสาย)",
+    contents: {
+      type: "bubble",
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "md",
+        contents: [
+          {
+            type: "text",
+            text: "เช็คชื่อเช้านี้ 📝",
+            weight: "bold",
+            size: "lg"
+          },
+          {
+            type: "text",
+            text: "ถ้าจะลา หรือจะเข้าสาย กดปุ่มด้านล่างนี้ได้เลยนะ",
+            wrap: true,
+            size: "sm",
+            color: "#666666"
+          },
+          {
+            type: "box",
+            layout: "vertical",
+            spacing: "sm",
+            margin: "lg",
+            contents: [
+              {
+                type: "button",
+                style: "primary",
+                height: "sm",
+                action: {
+                  type: "postback",
+                  label: "📝 แจ้งลา",
+                  data: "action=leave_today"
+                }
+              },
+              {
+                type: "button",
+                style: "secondary",
+                height: "sm",
+                action: {
+                  type: "postback",
+                  label: "⏰ แจ้งเข้าสาย",
+                  data: "action=late_today"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  };
+
+  try {
+    await client.pushMessage(groupId, message);
+    console.log("Sent morning prompt to group", groupId);
+  } catch (err) {
+    console.error("sendMorningPromptToGroup error:", err);
+  }
+}
+
 // -------------------------
 // Webhook หลักจาก LINE
 // -------------------------
@@ -111,37 +182,33 @@ app.get("/", (req, res) => {
 // ยิงเองจาก browser / cron service เพื่อส่งข้อความเข้า group ตอนเช้า
 app.get("/cron/morning", async (req, res) => {
   try {
-    await client.pushMessage(process.env.LINE_GROUP_ID, {
-      type: "text",
-      text: "เช้านี้ใครมีธุระ/ป่วย หรือจะเข้าสาย ใช้ปุ่มด้านล่างนี้ได้เลยนะ ✅",
-      quickReply: {
-        items: [
-          {
-            type: "action",
-            action: {
-              type: "message",
-              label: "แจ้งลา",
-              text: "แจ้งลา"
-            }
-          },
-          {
-            type: "action",
-            action: {
-              type: "message",
-              label: "แจ้งเข้าสาย",
-              text: "แจ้งเข้าสาย"
-            }
-          }
-        ]
-      }
-    });
-
+    await sendMorningPromptToGroup();
     res.send("ok");
   } catch (err) {
     console.error("cron/morning error:", err);
     res.status(500).send("error");
   }
 });
+
+async function handlePostback(event) {
+  const data = event.postback.data;
+  const params = new URLSearchParams(data);
+  const action = params.get("action");
+  const userId = event.source.userId;
+  const replyToken = event.replyToken;
+
+  // ... หา student จาก line_links ตาม userId ...
+
+  if (action === "leave_today") {
+    // บันทึก leave_requests ...
+    return replyText(replyToken, `บันทึกว่า ... ลาวันนี้แล้ว`);
+  }
+
+  if (action === "late_today") {
+    // บันทึก leave_requests ...
+    return replyText(replyToken, `บันทึกว่า ... แจ้งเข้าสายแล้ว`);
+  }
+}
 
 // ยิงสรุป (ตอนนี้ยังเป็นข้อความ dummy ไว้ทดสอบเฉย ๆ)
 app.get("/cron/summary", async (req, res) => {

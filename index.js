@@ -109,66 +109,35 @@ app.post("/webhook", line.middleware(config), (req, res) => {
 
 // ฟังก์ชันจัดการ event จาก LINE
 async function handleEvent(event) {
+  console.log("event:", JSON.stringify(event, null, 2));
 
-  async function handleEvent(event) {
-  // log source ไว้ดู groupId / userId เวลา debug
-  console.log("Source:", JSON.stringify(event.source));
-
+  // รับเฉพาะข้อความก่อน
   if (event.type !== "message" || event.message.type !== "text") {
     return Promise.resolve(null);
   }
 
   const text = event.message.text.trim();
 
-  // ถ้ากดปุ่ม "แจ้งลา"
+  // กดปุ่ม "แจ้งลา"
   if (text === "แจ้งลา") {
     return client.replyMessage(event.replyToken, {
       type: "text",
-      text:
-        "แบบฟอร์มแจ้งลา 🙏\n" +
-        "พิมพ์ตามนี้เลยนะ:\n" +
-        "ลา: ชื่อ-นามสกุล / ห้อง / เหตุผล / วันที่ที่ลา"
+      text: "พิมพ์แบบนี้ในห้องเลยนะ\n\nลา: ชื่อ-สกุล / สาเหตุ\nเช่น\nลา: วิชญะ คุ้มฉัยยา / ป่วยมีไข้"
     });
   }
 
-  // ถ้ากดปุ่ม "แจ้งเข้าสาย"
+  // กดปุ่ม "แจ้งเข้าสาย"
   if (text === "แจ้งเข้าสาย") {
     return client.replyMessage(event.replyToken, {
       type: "text",
-      text:
-        "แบบฟอร์มแจ้งเข้าสาย ⏰\n" +
-        "พิมพ์ตามนี้เลยนะ:\n" +
-        "เข้าสาย: ชื่อ-นามสกุล / ห้อง / เหตุผล / เวลาที่จะมาถึง"
+      text: "พิมพ์แบบนี้ในห้องเลยนะ\n\nสาย: ชื่อ-สกุล / สาเหตุ\nเช่น\nสาย: วิชญะ คุ้มฉัยยา / รถติด"
     });
   }
 
-  // ตรงนี้เดี๋ยวไว้ทีหลังจะเพิ่ม logic แยกข้อความที่ขึ้นต้นด้วย "ลา:" / "เข้าสาย:" แล้ว insert เข้า Supabase
+  // ถ้าเป็นข้อความอื่นๆ (ตอนนี้ยังไม่ทำอะไร)
   return Promise.resolve(null);
 }
 
-  // log source ไว้เอา groupId / userId ใช้
-  console.log("Source:", JSON.stringify(event.source, null, 2));
-
-  if (event.type !== "message" || event.message.type !== "text") {
-    return Promise.resolve(null);
-  }
-
-  const text = (event.message.text || "").trim();
-
-  // คำสั่ง test ง่าย ๆ
-  if (text === "/ping") {
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: "pong!",
-    });
-  }
-
-  // อื่น ๆ ตอนนี้ตอบกลับเฉย ๆ
-  return client.replyMessage(event.replyToken, {
-    type: "text",
-    text: `รับข้อความแล้ว: ${text}`,
-  });
-}
 
 // -------------------------
 // Routes ทดสอบ + cron
@@ -182,13 +151,68 @@ app.get("/", (req, res) => {
 // ยิงเองจาก browser / cron service เพื่อส่งข้อความเข้า group ตอนเช้า
 app.get("/cron/morning", async (req, res) => {
   try {
-    await sendMorningPromptToGroup();
+    const flex = {
+      type: "flex",
+      altText: "เช็คชื่อเช้านี้",
+      contents: {
+        type: "bubble",
+        body: {
+          type: "box",
+          layout: "vertical",
+          contents: [
+            {
+              type: "text",
+              text: "เช็คชื่อเช้านี้ 📝",
+              weight: "bold",
+              size: "lg"
+            },
+            {
+              type: "text",
+              text: "ถ้าจะลา หรือจะมาสาย ให้กดปุ่มด้านล่าง",
+              wrap: true,
+              size: "sm",
+              margin: "md"
+            }
+          ]
+        },
+        footer: {
+          type: "box",
+          layout: "vertical",
+          spacing: "sm",
+          contents: [
+            {
+              type: "button",
+              style: "primary",
+              color: "#22c55e",
+              action: {
+                type: "message",      // ✅ ให้ส่งข้อความแทน postback
+                label: "แจ้งลา",
+                text: "แจ้งลา"        // ข้อความที่บอทจะได้รับ
+              }
+            },
+            {
+              type: "button",
+              style: "secondary",
+              action: {
+                type: "message",
+                label: "แจ้งเข้าสาย",
+                text: "แจ้งเข้าสาย"
+              }
+            }
+          ],
+          flex: 0
+        }
+      }
+    };
+
+    await client.pushMessage(process.env.LINE_GROUP_ID, flex);
     res.send("ok");
   } catch (err) {
     console.error("cron/morning error:", err);
     res.status(500).send("error");
   }
 });
+
 
 async function handlePostback(event) {
   const data = event.postback.data;

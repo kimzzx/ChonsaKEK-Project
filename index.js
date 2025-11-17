@@ -38,6 +38,43 @@ app.post("/webhook", line.middleware(config), (req, res) => {
 
 // ฟังก์ชันจัดการ event จาก LINE
 async function handleEvent(event) {
+
+  async function handleEvent(event) {
+  // log source ไว้ดู groupId / userId เวลา debug
+  console.log("Source:", JSON.stringify(event.source));
+
+  if (event.type !== "message" || event.message.type !== "text") {
+    return Promise.resolve(null);
+  }
+
+  const text = event.message.text.trim();
+
+  // ถ้ากดปุ่ม "แจ้งลา"
+  if (text === "แจ้งลา") {
+    return client.replyMessage(event.replyToken, {
+      type: "text",
+      text:
+        "แบบฟอร์มแจ้งลา 🙏\n" +
+        "พิมพ์ตามนี้เลยนะ:\n" +
+        "ลา: ชื่อ-นามสกุล / ห้อง / เหตุผล / วันที่ที่ลา"
+    });
+  }
+
+  // ถ้ากดปุ่ม "แจ้งเข้าสาย"
+  if (text === "แจ้งเข้าสาย") {
+    return client.replyMessage(event.replyToken, {
+      type: "text",
+      text:
+        "แบบฟอร์มแจ้งเข้าสาย ⏰\n" +
+        "พิมพ์ตามนี้เลยนะ:\n" +
+        "เข้าสาย: ชื่อ-นามสกุล / ห้อง / เหตุผล / เวลาที่จะมาถึง"
+    });
+  }
+
+  // ตรงนี้เดี๋ยวไว้ทีหลังจะเพิ่ม logic แยกข้อความที่ขึ้นต้นด้วย "ลา:" / "เข้าสาย:" แล้ว insert เข้า Supabase
+  return Promise.resolve(null);
+}
+
   // log source ไว้เอา groupId / userId ใช้
   console.log("Source:", JSON.stringify(event.source, null, 2));
 
@@ -76,11 +113,32 @@ app.get("/cron/morning", async (req, res) => {
   try {
     await client.pushMessage(process.env.LINE_GROUP_ID, {
       type: "text",
-      text: "ทดสอบ /cron/morning: บอทส่งข้อความเข้ากลุ่มได้แล้ว ✅",
+      text: "เช้านี้ใครมีธุระ/ป่วย หรือจะเข้าสาย ใช้ปุ่มด้านล่างนี้ได้เลยนะ ✅",
+      quickReply: {
+        items: [
+          {
+            type: "action",
+            action: {
+              type: "message",
+              label: "แจ้งลา",
+              text: "แจ้งลา"
+            }
+          },
+          {
+            type: "action",
+            action: {
+              type: "message",
+              label: "แจ้งเข้าสาย",
+              text: "แจ้งเข้าสาย"
+            }
+          }
+        ]
+      }
     });
+
     res.send("ok");
   } catch (err) {
-    console.error("cron/morning error:", err.response?.data || err.message || err);
+    console.error("cron/morning error:", err);
     res.status(500).send("error");
   }
 });

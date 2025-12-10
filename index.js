@@ -1,4 +1,4 @@
-// index.js
+// index.js  (Parent Leave Bot)
 
 const express = require("express");
 const line = require("@line/bot-sdk");
@@ -21,19 +21,17 @@ const supabase = createClient(
 const app = express();
 app.use(express.json());
 
-// client LINE เอาไว้ push / reply
 const client = new line.Client(config);
 
-// ฟังก์ชันตอบข้อความง่าย ๆ
+// -------------------------
+// helper
+// -------------------------
 function replyText(replyToken, text) {
-  return client.replyMessage(replyToken, {
-    type: "text",
-    text,
-  });
+  return client.replyMessage(replyToken, { type: "text", text });
 }
 
 // -------------------------
-// ฟังก์ชันส่ง Flex ปุ่มแจ้งลา/สาย เข้า group ตอนเช้า
+// ส่ง Flex ตอนเช้าเข้า “กลุ่มผู้ปกครอง”
 // -------------------------
 async function sendMorningPromptToGroup() {
   const groupId = process.env.LINE_GROUP_ID;
@@ -42,7 +40,7 @@ async function sendMorningPromptToGroup() {
     return;
   }
 
-  const message = {
+  const flex = {
     type: "flex",
     altText: "เช็คชื่อเช้านี้ (แจ้งลา / แจ้งเข้าสาย)",
     contents: {
@@ -60,85 +58,74 @@ async function sendMorningPromptToGroup() {
           },
           {
             type: "text",
-            text: "ถ้าจะลา หรือจะเข้าสาย กดปุ่มด้านล่างนี้ได้เลยนะ",
+            text: "ถ้าจะลา หรือจะมาสาย ให้กดปุ่มด้านล่าง",
             wrap: true,
             size: "sm",
             color: "#666666",
           },
+        ],
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        contents: [
           {
-            type: "box",
-            layout: "vertical",
-            spacing: "sm",
-            margin: "lg",
-            contents: [
-              {
-                type: "button",
-                style: "primary",
-                height: "sm",
-                action: {
-                  type: "postback",
-                  label: "📝 แจ้งลา",
-                  data: "action=leave_today",
-                },
-              },
-              {
-                type: "button",
-                style: "secondary",
-                height: "sm",
-                action: {
-                  type: "postback",
-                  label: "⏰ แจ้งเข้าสาย",
-                  data: "action=late_today",
-                },
-              },
-            ],
+            type: "button",
+            style: "primary",
+            color: "#22c55e",
+            action: {
+              type: "message",       // 👉 ให้ยิงเป็นข้อความ
+              label: "📝 แจ้งลา",
+              text: "📝 แจ้งลา",
+            },
+          },
+          {
+            type: "button",
+            style: "secondary",
+            action: {
+              type: "message",
+              label: "⏰ แจ้งเข้าสาย",
+              text: "⏰ แจ้งเข้าสาย",
+            },
           },
         ],
+        flex: 0,
       },
     },
   };
 
-  try {
-    await client.pushMessage(groupId, message);
-    console.log("Sent morning prompt to group", groupId);
-  } catch (err) {
-    console.error("sendMorningPromptToGroup error:", err);
-  }
+  await client.pushMessage(groupId, flex);
+  console.log("Sent morning prompt to group", groupId);
 }
 
 // -------------------------
-// Webhook หลักจาก LINE
+// Webhook จาก LINE
 // -------------------------
-app.post("/webhook", line.middleware(config), (req, res) => {
-  Promise.all(req.body.events.map(handleEvent))
-    .then(() => res.json({ status: "ok" }))
-    .catch((err) => {
-      console.error("webhook error:", err);
-      res.status(500).end();
-    });
+app.post("/webhook", line.middleware(config), async (req, res) => {
+  try {
+    await Promise.all(req.body.events.map(handleEvent));
+    res.json({ status: "ok" });
+  } catch (err) {
+    console.error("webhook error:", err);
+    res.status(500).end();
+  }
 });
 
-// -------------------------
-// handleEvent: รับทุก event ที่เข้ามา
-// -------------------------
+// logic หลักของบอท
 async function handleEvent(event) {
   console.log("event:", JSON.stringify(event, null, 2));
 
-  // 1) ถ้าเป็น postback จากปุ่ม Flex → ไป handlePostback
-  if (event.type === "postback") {
-    return handlePostback(event);
-  }
-
-  // 2) ถ้าไม่ใช่ข้อความ text → ยังไม่รองรับ
+  // รับเฉพาะข้อความ
   if (event.type !== "message" || event.message.type !== "text") {
-    return null;
+    return;
   }
 
   const userId = event.source.userId;
   const text = event.message.text.trim();
   const replyToken = event.replyToken;
 
-  // 3) เช็คว่าคนนี้กำลังกรอกฟอร์มค้างอยู่ไหม
+  // 1) เช็คว่าผู้ปกครองคนนี้กำลังอยู่ในฟอร์มอยู่ไหม
   const { data: formState, error: formErr } = await supabase
     .from("leave_form_states")
     .select("*")
@@ -149,23 +136,25 @@ async function handleEvent(event) {
     console.error("leave_form_states select error:", formErr);
   }
 
-  // ---------- อยู่ในโหมดฟอร์ม ----------
+  // -------------------------
+  // อยู่ในโหมดฟอร์ม
+  // -------------------------
   if (formState) {
-    // STEP 1: รอชื่อ
-    if (formState.step === "waiting_name") {
-      const name = text;
+    // STEP 1: รอชื่อ-นามสกุลนักเรียน
+    if (formState.step === "waiting_child_name") {
+      const childName = text;
 
       await supabase
         .from("leave_form_states")
         .update({
-          temp_name: name,
+          temp_child_name: childName,
           step: "waiting_reason",
         })
         .eq("line_user_id", userId);
 
       return replyText(
         replyToken,
-        "รับชื่อเรียบร้อยแล้ว ✅\n\nกรุณาพิมพ์สาเหตุที่ลา/เข้าสาย\nเช่น: ป่วยเป็นไข้, รถติด, ไปหาหมอ ฯลฯ"
+        "รับชื่อนักเรียนแล้ว ✅\n\nกรุณาพิมพ์สาเหตุที่ลา/มาสาย\nเช่น: ป่วยเป็นไข้, ไปหาหมอ, รถติด ฯลฯ"
       );
     }
 
@@ -175,26 +164,14 @@ async function handleEvent(event) {
       const now = new Date();
       const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
 
-      // ผูก student_id ถ้ามี line_links
-      const { data: link } = await supabase
-        .from("line_links")
-        .select("student_id, students(full_name, student_code)")
-        .eq("line_user_id", userId)
-        .maybeSingle();
-
-      const studentId = link?.student_id ?? null;
-      const fullReason = `ชื่อ: ${formState.temp_name}\nสาเหตุ: ${reason}`;
-
       const insertPayload = {
-        leave_date: today,
+        parent_line_user_id: userId,
+        child_name: formState.temp_child_name,
         type: formState.type, // 'leave' หรือ 'late'
-        reason: fullReason,
+        reason,
+        leave_date: today,
         leave_at: now.toISOString(),
       };
-
-      if (studentId) {
-        insertPayload.student_id = studentId;
-      }
 
       const { error: insertErr } = await supabase
         .from("leave_requests")
@@ -204,36 +181,26 @@ async function handleEvent(event) {
         console.error("insert leave_requests error:", insertErr);
         return replyText(
           replyToken,
-          "มีปัญหาในการบันทึกข้อมูลใบลา ลองอีกครั้งหรือติดต่อครูครับ 🙏"
+          "มีปัญหาในการบันทึกข้อมูลใบลา ลองใหม่อีกครั้งหรือติดต่อครูครับ 🙏"
         );
       }
 
-      // ล้าง state ทิ้ง
+      // ล้าง state ฟอร์ม
       await supabase
         .from("leave_form_states")
         .delete()
         .eq("line_user_id", userId);
 
       const typeText =
-        formState.type === "leave" ? "ลาเรียน" : "แจ้งเข้าสาย";
-
-      const dateStr = now.toLocaleDateString("th-TH", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
-      const timeStr = now.toLocaleTimeString("th-TH", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+        formState.type === "leave" ? "ลาเรียน" : "มาสาย";
 
       return replyText(
         replyToken,
-        `บันทึก${typeText}เรียบร้อยแล้ว ✅\n\nชื่อ: ${formState.temp_name}\nสาเหตุ: ${reason}\nวันที่: ${dateStr} เวลา: ${timeStr}`
+        `บันทึก${typeText}เรียบร้อยแล้ว ✅\n\nนักเรียน: ${formState.temp_child_name}\nสาเหตุ: ${reason}`
       );
     }
 
-    // step แปลก ๆ → ล้าง state
+    // ถ้า step แปลก ๆ → ล้างทิ้ง
     await supabase
       .from("leave_form_states")
       .delete()
@@ -245,69 +212,48 @@ async function handleEvent(event) {
     );
   }
 
-  // ---------- นอกโหมดฟอร์ม ----------
-  if (text === "แจ้งลา" || text === "แจ้งเข้าสาย") {
+  // -------------------------
+  // ยังไม่ได้เริ่มฟอร์ม → ดูว่ากดปุ่มไหน
+  // -------------------------
+  if (text === "📝 แจ้งลา" || text === "แจ้งลา") {
+    // สร้าง state ฟอร์มแบบ "ลาเรียน"
+    await supabase.from("leave_form_states").upsert({
+      line_user_id: userId,
+      step: "waiting_child_name",
+      temp_child_name: null,
+      type: "leave",
+    });
+
     return replyText(
       replyToken,
-      "ตอนนี้ปุ่ม Flex ใช้สำหรับแจ้งลา/เข้าสายเท่านั้นนะครับ\nลองกดปุ่มที่ครูส่งวันนี้อีกรอบ 🙏"
+      "แบบฟอร์มลาเรียน\n\nกรุณาพิมพ์ชื่อ-นามสกุลของนักเรียน\nเช่น: ด.ช. สมชาย ใจดี"
     );
   }
 
-  return null;
-}
-
-// -------------------------
-// handlePostback: ตอนกดปุ่ม Flex
-// -------------------------
-async function handlePostback(event) {
-  const data = event.postback.data; // เช่น "action=leave_today"
-  const params = new URLSearchParams(data);
-  const action = params.get("action");
-  const userId = event.source.userId;
-  const replyToken = event.replyToken;
-
-  // ดึงข้อมูล student จาก line_links ถ้ามี
-  const { data: link } = await supabase
-    .from("line_links")
-    .select("student_id, students(full_name, student_code)")
-    .eq("line_user_id", userId)
-    .maybeSingle();
-
-  const hasStudent = !!link;
-
-  if (action === "leave_today" || action === "late_today") {
-    const type = action === "leave_today" ? "leave" : "late";
-
-    // สร้าง/อัปเดตสถานะฟอร์ม
+  if (text === "⏰ แจ้งเข้าสาย" || text === "แจ้งเข้าสาย") {
+    // สร้าง state ฟอร์มแบบ "มาสาย"
     await supabase.from("leave_form_states").upsert({
       line_user_id: userId,
-      step: "waiting_name",
-      temp_name: null,
-      type,
+      step: "waiting_child_name",
+      temp_child_name: null,
+      type: "late",
     });
 
-    let intro =
-      type === "leave" ? "แบบฟอร์มลาเรียน" : "แบบฟอร์มแจ้งเข้าสาย";
-
-    let askMsg =
-      intro + "\n\nกรุณาพิมพ์ชื่อ-นามสกุลของคุณ\nเช่น: สมชาย ใจดี";
-
-    if (hasStudent) {
-      askMsg += `\n\n(ระบบรู้ว่าคุณคือ ${link.students.student_code} ${link.students.full_name} อยู่แล้ว แต่กรอกชื่อไว้ให้ครูดูในรายงานได้)`;
-    }
-
-    return replyText(replyToken, askMsg);
+    return replyText(
+      replyToken,
+      "แบบฟอร์มแจ้งมาสาย\n\nกรุณาพิมพ์ชื่อ-นามสกุลของนักเรียน\nเช่น: ด.ช. สมชาย ใจดี"
+    );
   }
 
-  return null;
+  // ข้อความอื่นที่ไม่เกี่ยว → ยังไม่ตอบอะไรเป็นพิเศษ
+  return;
 }
 
 // -------------------------
 // Routes ทดสอบ + cron
 // -------------------------
-
 app.get("/", (req, res) => {
-  res.send("LINE bot is running");
+  res.send("Parent leave bot is running");
 });
 
 app.get("/cron/morning", async (req, res) => {
@@ -320,18 +266,16 @@ app.get("/cron/morning", async (req, res) => {
   }
 });
 
+// (เผื่ออยากยิงสรุปทีหลัง ใช้ /cron/summary ได้)
 app.get("/cron/summary", async (req, res) => {
   try {
     await client.pushMessage(process.env.LINE_GROUP_ID, {
     type: "text",
-    text: "ทดสอบ /cron/summary: สรุปการมาเรียน (dummy) ✅",
+      text: "ทดสอบ /cron/summary: สรุปการลา/มาสาย (dummy) ✅",
     });
     res.send("ok");
   } catch (err) {
-    console.error(
-      "cron/summary error:",
-      err.response?.data || err.message || err
-    );
+    console.error("cron/summary error:", err.response?.data || err.message || err);
     res.status(500).send("error");
   }
 });
@@ -341,5 +285,5 @@ app.get("/cron/summary", async (req, res) => {
 // -------------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("LINE bot running on port", PORT);
+  console.log("Parent leave bot running on port", PORT);
 });

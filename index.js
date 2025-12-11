@@ -6,7 +6,7 @@ const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
 // -------------------------
-// LINE & Supabase Config
+// CONFIG
 // -------------------------
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -18,15 +18,42 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-app.post("/webhook", line.middleware(config), (req, res) => {
-  console.log("Webhook event:", JSON.stringify(req.body, null, 2));
-  // ตอนนี้ยังไม่ต้องทำอะไรกับ event ก็ได้
-  res.status(200).json({ ok: true });
+// สร้าง express app ก่อน แล้วค่อยใช้
+const app = express();
+app.use(express.json());
+
+const client = new line.Client(config);
+
+// -------------------------
+// helper
+// -------------------------
+function replyText(replyToken, text) {
+  return client.replyMessage(replyToken, {
+    type: "text",
+    text,
+  });
+}
+
+// -------------------------
+// WEBHOOK (ให้ Verify ผ่านก่อน)
+// -------------------------
+app.post("/webhook", line.middleware(config), async (req, res) => {
+  try {
+    console.log("Webhook body:", JSON.stringify(req.body, null, 2));
+    // ตอนนี้ยังไม่ได้ทำ logic อะไรพิเศษ แค่ตอบ 200 ให้ LINE พอ
+    return res.json({ status: "ok" });
+  } catch (err) {
+    console.error("webhook error:", err);
+    return res.status(500).end();
+  }
 });
 
+// -------------------------
+// LIFF FORM PAGE  /leave
+// -------------------------
 app.get("/leave", (req, res) => {
-  // type จะได้มาจาก query (?type=leave หรือ ?type=late)
-  const type = req.query.type === "late" ? "late" : "leave";
+  const type = req.query.type === "late" ? "late" : "leave"; // default leave
+  const liffId = process.env.LIFF_LEAVE_ID || "";
 
   res.send(`
 <!doctype html>
@@ -157,19 +184,23 @@ app.get("/leave", (req, res) => {
   </div>
 
   <script>
-    const LIFF_ID = "${process.env.LIFF_LEAVE_ID}";
+    const LIFF_ID = "${liffId}";
 
-    async function main() {
+    async function initLiff() {
+      if (!LIFF_ID) return;
       try {
         await liff.init({ liffId: LIFF_ID });
-        // ดึง profile ไว้โชว์หรือใช้ต่อได้ ถ้าต้องการ
-        const profile = await liff.getProfile();
-        console.log("LIFF profile:", profile);
+        console.log("LIFF init success");
       } catch (err) {
         console.error("LIFF init error:", err);
-        document.getElementById("msg").textContent = "ไม่สามารถโหลด LIFF ได้";
-        document.getElementById("msg").className = "error";
+        const msg = document.getElementById("msg");
+        msg.textContent = "ไม่สามารถโหลด LIFF ได้ แต่ยังสามารถส่งฟอร์มได้";
+        msg.className = "error";
       }
+    }
+
+    async function main() {
+      await initLiff();
 
       document.getElementById("submitBtn").addEventListener("click", async () => {
         const btn = document.getElementById("submitBtn");
@@ -194,6 +225,7 @@ app.get("/leave", (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name, reason, type }),
           });
+
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Unknown error");
 
@@ -201,7 +233,9 @@ app.get("/leave", (req, res) => {
           msg.className = "success";
 
           setTimeout(() => {
-            if (liff.isInClient()) liff.closeWindow();
+            if (window.liff && liff.isInClient()) {
+              liff.closeWindow();
+            }
           }, 1200);
         } catch (err) {
           console.error(err);
@@ -219,218 +253,49 @@ app.get("/leave", (req, res) => {
   `);
 });
 
-
-const app = express();
-app.use(express.json());
-
-// client LINE ไว้ใช้ reply/push
-const client = new line.Client(config);
-
-function replyText(replyToken, text) {
-  return client.replyMessage(replyToken, {
-    type: "text",
-    text,
-  });
-}
-
 // -------------------------
-// Webhook หลักจาก LINE
+// API รับข้อมูลจาก LIFF แล้วเซฟเข้า Supabase
 // -------------------------
-app.post("/webhook", line.middleware(config), async (req, res) => {
-  // แก้ปัญหา verify webhook: ตอน verify events จะเป็น [] หรือ undefined
-  const events = Array.isArray(req.body.events) ? req.body.events : [];
-
+app.post("/api/leave-from-liff", async (req, res) => {
   try {
-    await Promise.all(events.map(handleEvent));
-    return res.json({ status: "ok" });
+    const { name, reason, type } = req.body;
+
+    if (!name || !reason || !type) {
+      return res.status(400).json({ error: "missing fields" });
+    }
+
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    const { error } = await supabase.from("leave_requests").insert({
+      leave_date: today,
+      type, // 'leave' หรือ 'late'
+      reason: \`ชื่อ: \${name}\\nสาเหตุ: \${reason}\`,
+      leave_at: now.toISOString(),
+    });
+
+    if (error) {
+      console.error("insert leave_requests error:", error);
+      return res.status(500).json({ error: "supabase insert failed" });
+    }
+
+    return res.json({ ok: true });
   } catch (err) {
-    console.error("webhook error:", err);
-    return res.status(500).end();
+    console.error("api/leave-from-liff error:", err);
+    return res.status(500).json({ error: "server error" });
   }
 });
 
 // -------------------------
-// ฟังก์ชันจัดการ event จาก LINE
+// cron/morning → ยิง Flex + ปุ่มเปิด LIFF
 // -------------------------
-async function handleEvent(event) {
-  console.log("event:", JSON.stringify(event, null, 2));
-
-  // รับเฉพาะข้อความธรรมดา
-  if (event.type !== "message" || event.message.type !== "text") {
-    return null;
-  }
-
-  const userId = event.source.userId;
-  const text = event.message.text.trim();
-  const replyToken = event.replyToken;
-
-  // 1) เช็คว่าคนนี้กำลังกรอกฟอร์มอยู่มั้ย
-  const { data: formState, error: formErr } = await supabase
-    .from("leave_form_states")
-    .select("*")
-    .eq("line_user_id", userId)
-    .maybeSingle();
-
-  if (formErr) {
-    console.error("leave_form_states select error:", formErr);
-  }
-
-  // -------------------------
-  // โหมดกรอกฟอร์ม (มี state อยู่แล้ว)
-  // -------------------------
-  if (formState) {
-    // STEP 1: รอ "ชื่อ-สกุล"
-    if (formState.step === "waiting_name") {
-      const name = text;
-
-      await supabase
-        .from("leave_form_states")
-        .update({
-          temp_name: name,
-          step: "waiting_reason",
-        })
-        .eq("line_user_id", userId);
-
-      return replyText(
-        replyToken,
-        [
-          "✅ รับชื่อเรียบร้อยแล้ว",
-          "",
-          "2️⃣ กรุณาพิมพ์ *สาเหตุที่ลา/เข้าสาย*",
-          "เช่น: ป่วยเป็นไข้, รถติด, ไปหาหมอ ฯลฯ",
-        ].join("\n")
-      );
-    }
-
-    // STEP 2: รอ "เหตุผล"
-    if (formState.step === "waiting_reason") {
-      const reason = text;
-      const now = new Date();
-      const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
-
-      // ผูกกับ student_id ถ้ามี line_links
-      const { data: link } = await supabase
-        .from("line_links")
-        .select("student_id, students(full_name, student_code)")
-        .eq("line_user_id", userId)
-        .maybeSingle();
-
-      const studentId = link?.student_id ?? null;
-
-      const fullReason = `ชื่อ: ${formState.temp_name}\nสาเหตุ: ${reason}`;
-
-      const insertPayload = {
-        leave_date: today,
-        type: formState.type, // 'leave' หรือ 'late'
-        reason: fullReason,
-        leave_at: now.toISOString(),
-      };
-
-      if (studentId) {
-        insertPayload.student_id = studentId;
-      }
-
-      const { error: insertErr } = await supabase
-        .from("leave_requests")
-        .insert(insertPayload);
-
-      if (insertErr) {
-        console.error("insert leave_requests error:", insertErr);
-        return replyText(
-          replyToken,
-          "⚠️ มีปัญหาในการบันทึกข้อมูลใบลา ลองอีกครั้งหรือติดต่อครูครับ 🙏"
-        );
-      }
-
-      // ลบ state เพราะกรอกเสร็จแล้ว
-      await supabase
-        .from("leave_form_states")
-        .delete()
-        .eq("line_user_id", userId);
-
-      const typeText =
-        formState.type === "leave" ? "ลาเรียน" : "แจ้งเข้าสาย";
-
-      const dateStr = now.toLocaleDateString("th-TH", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
-      const timeStr = now.toLocaleTimeString("th-TH", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-
-      return replyText(
-        replyToken,
-        [
-          `✅ บันทึก${typeText}เรียบร้อยแล้ว`,
-          "",
-          `ชื่อ: ${formState.temp_name}`,
-          `สาเหตุ: ${reason}`,
-          `วันที่: ${dateStr} เวลา: ${timeStr}`,
-        ].join("\n")
-      );
-    }
-
-    // step แปลก → ล้าง state ทิ้ง
-    await supabase
-      .from("leave_form_states")
-      .delete()
-      .eq("line_user_id", userId);
-
-    return replyText(
-      replyToken,
-      "⚠️ เกิดข้อผิดพลาดกับแบบฟอร์ม ลองกดปุ่มแจ้งลา/แจ้งเข้าสายใหม่อีกครั้งนะครับ"
-    );
-  }
-
-  // -------------------------
-  // ยังไม่ได้อยู่ในโหมดฟอร์ม
-  // เริ่มฟอร์มเมื่อกดปุ่ม (ข้อความ "แจ้งลา" / "แจ้งเข้าสาย")
-  // -------------------------
-  if (text === "แจ้งลา" || text === "แจ้งเข้าสาย") {
-    const type = text === "แจ้งลา" ? "leave" : "late";
-
-    await supabase
-      .from("leave_form_states")
-      .upsert({
-        line_user_id: userId,
-        step: "waiting_name",
-        temp_name: null,
-        type,
-      });
-
-    const title =
-      type === "leave" ? "📄 แบบฟอร์มลาเรียน" : "⏰ แบบฟอร์มแจ้งเข้าสาย";
-
-    return replyText(
-      replyToken,
-      [
-        title,
-        "",
-        "1️⃣ กรุณาพิมพ์ *ชื่อ-นามสกุลของนักเรียน*",
-        'เช่น: วิชญะ คุ้มฉัยยา',
-      ].join("\n")
-    );
-  }
-
-  // ข้อความอื่น ๆ ไม่ตอบอะไร (หรือจะใส่ help ก็ได้)
-  return null;
-}
-
-// -------------------------
-// Routes ทดสอบ + cron
-// -------------------------
-
-// root เอาไว้เช็คว่า service รันอยู่มั้ย
-app.get("/", (req, res) => {
-  res.send("LINE bot is running");
-});
-
-// ยิงเองจาก browser / cron service เพื่อส่งข้อความเข้า group ตอนเช้า
 app.get("/cron/morning", async (req, res) => {
   try {
+    const liffId = process.env.LIFF_LEAVE_ID;
+    if (!liffId) {
+      return res.status(500).send("LIFF_LEAVE_ID not set");
+    }
+
     const message = {
       type: "flex",
       altText: "เช็คชื่อเช้านี้ (แจ้งลา / แจ้งเข้าสาย)",
@@ -462,7 +327,7 @@ app.get("/cron/morning", async (req, res) => {
                   action: {
                     type: "uri",
                     label: "📝 แจ้งลา",
-                    uri: `https://liff.line.me/${process.env.LIFF_LEAVE_ID}?type=leave`
+                    uri: \`https://liff.line.me/\${liffId}?type=leave\`
                   }
                 },
                 {
@@ -472,7 +337,7 @@ app.get("/cron/morning", async (req, res) => {
                   action: {
                     type: "uri",
                     label: "⏰ แจ้งเข้าสาย",
-                    uri: `https://liff.line.me/${process.env.LIFF_LEAVE_ID}?type=late`
+                    uri: \`https://liff.line.me/\${liffId}?type=late\`
                   }
                 }
               ]
@@ -480,8 +345,9 @@ app.get("/cron/morning", async (req, res) => {
           ]
         }
       }
-    }
-    await client.pushMessage(process.env.LINE_GROUP_ID, flex);
+    };
+
+    await client.pushMessage(process.env.LINE_GROUP_ID, message);
     res.send("ok");
   } catch (err) {
     console.error("cron/morning error:", err);
@@ -489,58 +355,15 @@ app.get("/cron/morning", async (req, res) => {
   }
 });
 
-// ยิงสรุป (ตอนนี้ยัง dummy)
-app.get("/cron/summary", async (req, res) => {
-  try {
-    await client.pushMessage(process.env.LINE_GROUP_ID, {
-      type: "text",
-      text: "ทดสอบ /cron/summary: สรุปการมาเรียน (dummy) ✅",
-    });
-    res.send("ok");
-  } catch (err) {
-    console.error(
-      "cron/summary error:",
-      err.response?.data || err.message || err
-    );
-    res.status(500).send("error");
-  }
+// root test
+app.get("/", (req, res) => {
+  res.send("LINE bot + LIFF is running");
 });
 
 // -------------------------
-// Start server
+// START SERVER
 // -------------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("LINE bot running on port", PORT);
-});
-
-app.post("/api/leave-from-liff", async (req, res) => {
-  try {
-    const { name, reason, type } = req.body;
-
-    if (!name || !reason || !type) {
-      return res.status(400).json({ error: "missing fields" });
-    }
-
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
-
-    const { error } = await supabase.from("leave_requests").insert({
-      // student_id แล้วค่อย map ทีหลังได้
-      leave_date: today,
-      type, // 'leave' หรือ 'late'
-      reason: `ชื่อ: ${name}\nสาเหตุ: ${reason}`,
-      leave_at: now.toISOString(),
-    });
-
-    if (error) {
-      console.error("insert leave_requests error:", error);
-      return res.status(500).json({ error: "supabase insert failed" });
-    }
-
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error("api/leave-from-liff error:", err);
-    return res.status(500).json({ error: "server error" });
-  }
 });

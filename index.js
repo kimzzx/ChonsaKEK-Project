@@ -1,66 +1,47 @@
-// index.js
+// index.js (เวอร์ชันเคลียร์ปัญหา + LIFF ฟอร์มแจ้งลา/สาย)
 
 const express = require("express");
 const line = require("@line/bot-sdk");
 const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
-// -------------------------
-// CONFIG
-// -------------------------
+// ---------- สร้าง Express app ก่อน ----------
+const app = express();
+app.use(express.json());
+
+// ---------- LINE & Supabase Config ----------
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
+
+const client = new line.Client(config);
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// สร้าง express app ก่อน แล้วค่อยใช้
-const app = express();
-app.use(express.json());
-
-const client = new line.Client(config);
-
-// -------------------------
-// helper
-// -------------------------
-function replyText(replyToken, text) {
-  return client.replyMessage(replyToken, {
-    type: "text",
-    text,
-  });
-}
-
-// -------------------------
-// WEBHOOK (ให้ Verify ผ่านก่อน)
-// -------------------------
-app.post("/webhook", line.middleware(config), async (req, res) => {
-  try {
-    console.log("Webhook body:", JSON.stringify(req.body, null, 2));
-    // ตอนนี้ยังไม่ได้ทำ logic อะไรพิเศษ แค่ตอบ 200 ให้ LINE พอ
-    return res.json({ status: "ok" });
-  } catch (err) {
-    console.error("webhook error:", err);
-    return res.status(500).end();
-  }
+// ---------- Webhook จาก LINE (ใช้แค่ให้ Verify ผ่าน) ----------
+app.post("/webhook", line.middleware(config), (req, res) => {
+  console.log("Webhook body:", JSON.stringify(req.body, null, 2));
+  // ตอนนี้ยังไม่ทำ logic อะไร ใช้เก็บ log เฉย ๆ
+  return res.json({ status: "ok" }); // <-- ตอบ 200 ให้ LINE พอ
 });
 
-// -------------------------
-// LIFF FORM PAGE  /leave
-// -------------------------
+// ---------- หน้า LIFF ฟอร์ม /leave ----------
 app.get("/leave", (req, res) => {
-  const type = req.query.type === "late" ? "late" : "leave"; // default leave
-  const liffId = process.env.LIFF_LEAVE_ID || "";
+  const type = req.query.type === "late" ? "late" : "leave"; // default = leave
 
-  res.send(`
-<!doctype html>
+  const titleText = type === "leave" ? "แจ้งลาเรียน" : "แจ้งเข้าสาย";
+  const headerText =
+    type === "leave" ? "แบบฟอร์มลาเรียน" : "แบบฟอร์มแจ้งเข้าสาย";
+
+  res.send(`<!doctype html>
 <html lang="th">
 <head>
   <meta charset="utf-8" />
-  <title>แบบฟอร์มลา / แจ้งเข้าสาย</title>
+  <title>${headerText}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     body {
@@ -158,8 +139,8 @@ app.get("/leave", (req, res) => {
 </head>
 <body>
   <div class="card">
-    <div class="badge">${type === "leave" ? "แจ้งลาเรียน" : "แจ้งเข้าสาย"}</div>
-    <h1>แบบฟอร์ม${type === "leave" ? "ลาเรียน" : "แจ้งเข้าสาย"}</h1>
+    <div class="badge">${titleText}</div>
+    <h1>${headerText}</h1>
     <p class="hint">กรอกข้อมูลให้ครบแล้วกดส่ง ระบบจะบันทึกเข้าฐานข้อมูลอัตโนมัติ</p>
 
     <div class="field">
@@ -175,7 +156,7 @@ app.get("/leave", (req, res) => {
     <div class="field">
       <label>ประเภท</label>
       <select id="type">
-        <option value="${type}">${type === "leave" ? "ลาเรียน" : "แจ้งเข้าสาย"}</option>
+        <option value="${type}">${headerText}</option>
       </select>
     </div>
 
@@ -184,23 +165,18 @@ app.get("/leave", (req, res) => {
   </div>
 
   <script>
-    const LIFF_ID = "${liffId}";
+    const LIFF_ID = "${process.env.LIFF_LEAVE_ID}";
 
-    async function initLiff() {
-      if (!LIFF_ID) return;
+    async function main() {
       try {
         await liff.init({ liffId: LIFF_ID });
-        console.log("LIFF init success");
+        console.log("LIFF init OK");
       } catch (err) {
         console.error("LIFF init error:", err);
         const msg = document.getElementById("msg");
-        msg.textContent = "ไม่สามารถโหลด LIFF ได้ แต่ยังสามารถส่งฟอร์มได้";
+        msg.textContent = "ไม่สามารถโหลด LIFF ได้";
         msg.className = "error";
       }
-    }
-
-    async function main() {
-      await initLiff();
 
       document.getElementById("submitBtn").addEventListener("click", async () => {
         const btn = document.getElementById("submitBtn");
@@ -225,7 +201,6 @@ app.get("/leave", (req, res) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name, reason, type }),
           });
-
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Unknown error");
 
@@ -249,13 +224,10 @@ app.get("/leave", (req, res) => {
     main();
   </script>
 </body>
-</html>
-  `);
+</html>`);
 });
 
-// -------------------------
-// API รับข้อมูลจาก LIFF แล้วเซฟเข้า Supabase
-// -------------------------
+// ---------- API ที่ LIFF เรียก เพื่อบันทึกลง Supabase ----------
 app.post("/api/leave-from-liff", async (req, res) => {
   try {
     const { name, reason, type } = req.body;
@@ -267,10 +239,13 @@ app.post("/api/leave-from-liff", async (req, res) => {
     const now = new Date();
     const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
 
+    // ใช้ string ต่อกันแบบง่าย ๆ กันปัญหา template literal
+    const fullReason = "ชื่อ: " + name + "\\nสาเหตุ: " + reason;
+
     const { error } = await supabase.from("leave_requests").insert({
       leave_date: today,
-      type, // 'leave' หรือ 'late'
-      reason: \`ชื่อ: \${name}\\nสาเหตุ: \${reason}\`,
+      type,
+      reason: fullReason,
       leave_at: now.toISOString(),
     });
 
@@ -286,16 +261,14 @@ app.post("/api/leave-from-liff", async (req, res) => {
   }
 });
 
-// -------------------------
-// cron/morning → ยิง Flex + ปุ่มเปิด LIFF
-// -------------------------
+// ---------- Route เช็คชีวิต / cron ----------
+app.get("/", (req, res) => {
+  res.send("LINE bot is running");
+});
+
+// ส่ง Flex card เข้า group ให้กดเข้า LIFF ฟอร์ม
 app.get("/cron/morning", async (req, res) => {
   try {
-    const liffId = process.env.LIFF_LEAVE_ID;
-    if (!liffId) {
-      return res.status(500).send("LIFF_LEAVE_ID not set");
-    }
-
     const message = {
       type: "flex",
       altText: "เช็คชื่อเช้านี้ (แจ้งลา / แจ้งเข้าสาย)",
@@ -306,13 +279,18 @@ app.get("/cron/morning", async (req, res) => {
           layout: "vertical",
           spacing: "md",
           contents: [
-            { type: "text", text: "เช็คชื่อเช้านี้ 📝", weight: "bold", size: "lg" },
+            {
+              type: "text",
+              text: "เช็คชื่อเช้านี้ 📝",
+              weight: "bold",
+              size: "lg",
+            },
             {
               type: "text",
               text: "ถ้าจะลา หรือจะเข้าสาย กดปุ่มด้านล่างนี้ได้เลยนะ",
               wrap: true,
               size: "sm",
-              color: "#666666"
+              color: "#666666",
             },
             {
               type: "box",
@@ -327,8 +305,8 @@ app.get("/cron/morning", async (req, res) => {
                   action: {
                     type: "uri",
                     label: "📝 แจ้งลา",
-                    uri: \`https://liff.line.me/\${liffId}?type=leave\`
-                  }
+                    uri: \`https://liff.line.me/\${process.env.LIFF_LEAVE_ID}?type=leave\`,
+                  },
                 },
                 {
                   type: "button",
@@ -337,14 +315,14 @@ app.get("/cron/morning", async (req, res) => {
                   action: {
                     type: "uri",
                     label: "⏰ แจ้งเข้าสาย",
-                    uri: \`https://liff.line.me/\${liffId}?type=late\`
-                  }
-                }
-              ]
-            }
-          ]
-        }
-      }
+                    uri: \`https://liff.line.me/\${process.env.LIFF_LEAVE_ID}?type=late\`,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
     };
 
     await client.pushMessage(process.env.LINE_GROUP_ID, message);
@@ -355,14 +333,7 @@ app.get("/cron/morning", async (req, res) => {
   }
 });
 
-// root test
-app.get("/", (req, res) => {
-  res.send("LINE bot + LIFF is running");
-});
-
-// -------------------------
-// START SERVER
-// -------------------------
+// ---------- Start server ----------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("LINE bot running on port", PORT);

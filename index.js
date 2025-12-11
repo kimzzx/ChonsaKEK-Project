@@ -271,59 +271,56 @@ app.get("/cron/morning", async (req, res) => {
   try {
     const message = {
       type: "flex",
-      altText: "เช็คชื่อเช้านี้ (แจ้งลา / แจ้งเข้าสาย)",
+      altText: "เช็คชื่อเช้านี้",
       contents: {
         type: "bubble",
         body: {
           type: "box",
           layout: "vertical",
-          spacing: "md",
           contents: [
             {
               type: "text",
               text: "เช็คชื่อเช้านี้ 📝",
               weight: "bold",
-              size: "lg",
+              size: "lg"
             },
             {
               type: "text",
-              text: "ถ้าจะลา หรือจะเข้าสาย กดปุ่มด้านล่างนี้ได้เลยนะ",
+              text: "ถ้าจะลา หรือจะเข้าสาย ให้กดปุ่มด้านล่าง",
               wrap: true,
               size: "sm",
-              color: "#666666",
+              margin: "md"
+            }
+          ]
+        },
+        footer: {
+          type: "box",
+          layout: "vertical",
+          spacing: "sm",
+          contents: [
+            {
+              type: "button",
+              style: "primary",
+              action: {
+                type: "uri",
+                label: "แจ้งลา",
+                uri: `https://liff.line.me/${process.env.LIFF_LEAVE_ID}?type=leave`
+              }
             },
             {
-              type: "box",
-              layout: "vertical",
-              spacing: "sm",
-              margin: "lg",
-              contents: [
-                {
-                  type: "button",
-                  style: "primary",
-                  height: "sm",
-                  action: {
-                    type: "uri",
-                    label: "📝 แจ้งลา",
-                    uri: \`https://liff.line.me/\${process.env.LIFF_LEAVE_ID}?type=leave\`,
-                  },
-                },
-                {
-                  type: "button",
-                  style: "secondary",
-                  height: "sm",
-                  action: {
-                    type: "uri",
-                    label: "⏰ แจ้งเข้าสาย",
-                    uri: \`https://liff.line.me/\${process.env.LIFF_LEAVE_ID}?type=late\`,
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      },
+              type: "button",
+              style: "secondary",
+              action: {
+                type: "uri",
+                label: "แจ้งเข้าสาย",
+                uri: `https://liff.line.me/${process.env.LIFF_LEAVE_ID}?type=late`
+              }
+            }
+          ]
+        }
+      }
     };
+
 
     await client.pushMessage(process.env.LINE_GROUP_ID, message);
     res.send("ok");

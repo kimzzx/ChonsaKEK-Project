@@ -1,11 +1,10 @@
-// index.js (LIFF ฟอร์มแจ้งลา/สาย + จำนวนวัน/ครึ่งวัน + ไม่พัง Railway)
+// index.js — LIFF Leave/Late Form + Supabase save (stable)
 
 const express = require("express");
 const line = require("@line/bot-sdk");
 const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
-// ---------- Express ----------
 const app = express();
 app.use(express.json());
 
@@ -22,118 +21,120 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ---------- Webhook (ทำให้ Verify ผ่าน) ----------
+// ---------- Helpers ----------
+function isoDateTodayTH() {
+  // today in YYYY-MM-DD (local timezone is fine for TH usage)
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// ---------- Webhook (ให้ Verify ผ่าน + log) ----------
 app.post("/webhook", line.middleware(config), (req, res) => {
   console.log("Webhook body:", JSON.stringify(req.body, null, 2));
   return res.json({ status: "ok" });
 });
 
-// ---------- หน้า LIFF ฟอร์ม ----------
+// ---------- LIFF Form Page ----------
 app.get("/leave", (req, res) => {
   const type = req.query.type === "late" ? "late" : "leave";
+  const titleText = type === "leave" ? "แจ้งลาเรียน" : "แจ้งเข้าสาย";
+  const headerText = type === "leave" ? "แบบฟอร์มลาเรียน" : "แบบฟอร์มแจ้งเข้าสาย";
 
-  const badge = type === "leave" ? "แจ้งลาเรียน" : "แจ้งเข้าสาย";
-  const title = type === "leave" ? "แบบฟอร์มลาเรียน" : "แบบฟอร์มแจ้งเข้าสาย";
-  const btnText = type === "leave" ? "ส่งใบลา" : "ส่งแจ้งเข้าสาย";
+  // ล็อกวันให้เป็น “วันนี้”
+  const lockedDate = isoDateTodayTH();
 
-  const liffId = process.env.LIFF_LEAVE_ID || "";
-
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`<!doctype html>
 <html lang="th">
 <head>
   <meta charset="utf-8" />
-  <title>${title}</title>
+  <title>${headerText}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
-    :root{
-      --bg:#0b1220;
-      --card:#0a1020;
-      --card2:#070b16;
-      --border:rgba(148,163,184,.28);
-      --text:#e5e7eb;
-      --muted:#a1a1aa;
-      --good:#22c55e;
-      --bad:#fb7185;
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #0f172a;
+      color: #e5e7eb;
+      display: flex;
+      justify-content: center;
     }
-    *{box-sizing:border-box}
-    body{
-      margin:0; padding:0;
-      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-      background: radial-gradient(1200px 600px at 10% 10%, rgba(99,102,241,.22), transparent 55%),
-                  radial-gradient(1000px 500px at 90% 20%, rgba(34,197,94,.16), transparent 55%),
-                  var(--bg);
-      color:var(--text);
-      min-height:100vh;
-      display:flex;
-      justify-content:center;
-      align-items:flex-start;
+    .card {
+      max-width: 440px;
+      width: 100%;
+      padding: 22px 18px 26px;
+      margin: 16px;
+      background: linear-gradient(145deg, #020617, #0b1120);
+      border-radius: 18px;
+      box-shadow: 0 14px 40px rgba(15,23,42,0.8);
+      border: 1px solid rgba(148,163,184,0.25);
     }
-    .card{
+    h1 { margin: 8px 0 6px; font-size: 1.22rem; }
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(52,211,153,0.1);
+      color: #6ee7b7;
+      border: 1px solid rgba(45,212,191,0.45);
+    }
+    .hint { font-size: 0.78rem; color: #9ca3af; margin: 8px 0 14px; }
+    label { display:block; font-size:0.86rem; margin: 0 0 6px; color:#cbd5f5; }
+    input, textarea, select {
       width:100%;
-      max-width:460px;
-      margin:18px;
-      padding:22px 18px 26px;
-      border-radius:18px;
-      background: linear-gradient(145deg, var(--card2), var(--card));
-      border:1px solid var(--border);
-      box-shadow: 0 18px 55px rgba(0,0,0,.45);
-    }
-    .badge{
-      display:inline-block;
-      font-size:.78rem;
-      padding:5px 10px;
-      border-radius:999px;
-      background: rgba(34,197,94,.12);
-      border:1px solid rgba(34,197,94,.35);
-      color:#86efac;
-      margin-bottom:10px;
-    }
-    h1{margin:6px 0 2px; font-size:1.25rem}
-    .sub{margin:0 0 14px; font-size:.86rem; color:var(--muted); line-height:1.35}
-    .row{display:grid; grid-template-columns:1fr 1fr; gap:10px}
-    label{display:block; font-size:.85rem; margin:0 0 5px; color:#cbd5e1}
-    input, textarea, select{
-      width:100%;
-      padding:11px 12px;
-      border-radius:12px;
-      border:1px solid rgba(148,163,184,.45);
-      background: rgba(2,6,23,.55);
-      color:var(--text);
+      padding:10px 12px;
+      border-radius: 12px;
+      border:1px solid rgba(148,163,184,0.45);
+      background: rgba(15,23,42,0.92);
+      color:#e5e7eb;
+      font-size: 0.95rem;
       outline:none;
+      box-sizing:border-box;
     }
-    textarea{min-height:96px; resize:vertical}
-    .field{margin:10px 0}
-    .hint{font-size:.76rem; color:var(--muted); margin-top:6px}
-    .btn{
-      width:100%;
-      margin-top:12px;
-      padding:12px 14px;
-      border:none;
-      border-radius:999px;
-      font-weight:700;
-      cursor:pointer;
+    input[readonly] { opacity: 0.9; }
+    textarea { min-height: 92px; resize: vertical; }
+    .field { margin-bottom: 12px; }
+    .row { display:flex; gap:10px; }
+    .row .field { flex:1; }
+    button {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 999px;
+      border: none;
+      font-size: 1rem;
+      font-weight: 700;
       background: linear-gradient(135deg, #22c55e, #16a34a);
-      color:#052e1a;
-      box-shadow: 0 16px 40px rgba(34,197,94,.26);
+      color: #022c22;
+      cursor: pointer;
+      box-shadow: 0 10px 30px rgba(34,197,94,0.38);
     }
-    .btn:disabled{opacity:.55; cursor:not-allowed; box-shadow:none}
-    .msg{margin-top:10px; font-size:.88rem}
-    .ok{color:#86efac}
-    .err{color:var(--bad)}
-    .mini{font-size:.78rem; color:var(--muted); margin-top:8px}
-    .divider{height:1px; background:rgba(148,163,184,.18); margin:14px 0}
+    button:disabled { opacity:0.55; cursor:default; box-shadow:none; }
+    .msg { margin-top: 12px; font-size: 0.9rem; }
+    .success { color: #4ade80; }
+    .error { color: #fb7185; }
   </style>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
   <div class="card">
-    <div class="badge">${badge}</div>
-    <h1>${title}</h1>
-    <p class="sub">กรอกข้อมูลให้ครบ แล้วกดส่ง ระบบจะบันทึกเข้า Supabase อัตโนมัติ</p>
+    <div class="badge">${titleText}</div>
+    <h1>${headerText}</h1>
+    <div class="hint">กรอกข้อมูลให้ครบ แล้วกด “ส่งข้อมูล” ระบบจะบันทึกเข้า Supabase ทันที</div>
 
     <div class="field">
-      <label>ชื่อ-นามสกุลนักเรียน</label>
-      <input id="name" placeholder="เช่น วิชญะ คุ้มฉัยยา" />
+      <label>วันที่ (ล็อกเป็นวันนี้)</label>
+      <input id="locked_date" type="date" value="${lockedDate}" readonly />
+      <div class="hint">*ถ้าต้องการให้เลือกวันย้อนหลัง/ล่วงหน้า บอกกู เดี๋ยวปลดล็อกให้</div>
+    </div>
+
+    <div class="field">
+      <label>ชื่อ-นามสกุล</label>
+      <input id="name" placeholder="เช่น สมชาย ใจดี" />
     </div>
 
     <div class="field">
@@ -141,154 +142,92 @@ app.get("/leave", (req, res) => {
       <textarea id="reason" placeholder="ป่วยเป็นไข้ / รถติด / ไปหาหมอ ฯลฯ"></textarea>
     </div>
 
-    <div class="divider"></div>
-
-    <div class="field">
-      <label>รูปแบบการลา</label>
-      <select id="duration_type">
-        <option value="full">เต็มวัน</option>
-        <option value="half_am">ครึ่งวัน (เช้า)</option>
-        <option value="half_pm">ครึ่งวัน (บ่าย)</option>
-      </select>
-      <div class="hint">ถ้า “ครึ่งวัน” แนะนำจำนวนวันเป็น 0.5</div>
-    </div>
-
     <div class="row">
       <div class="field">
-        <label>จำนวนวัน</label>
-        <input id="days" type="number" min="0.5" step="0.5" value="1" />
-      </div>
-      <div class="field">
-        <label>ประเภท</label>
-        <select id="type" disabled>
-          <option value="${type}">${type === "leave" ? "ลาเรียน" : "แจ้งเข้าสาย"}</option>
+        <label>รูปแบบการลา</label>
+        <select id="duration_type">
+          <option value="full">เต็มวัน</option>
+          <option value="half_am">ครึ่งวัน (เช้า)</option>
+          <option value="half_pm">ครึ่งวัน (บ่าย)</option>
         </select>
       </div>
-    </div>
-
-    <div class="row">
       <div class="field">
-        <label>วันที่เริ่ม</label>
-        <input id="start_date" type="date" />
-      </div>
-      <div class="field">
-        <label>วันที่สิ้นสุด (ถ้ามี)</label>
-        <input id="end_date" type="date" />
+        <label>จำนวนวันลา</label>
+        <input id="days" type="number" min="0.5" step="0.5" value="1" />
       </div>
     </div>
-    <div class="hint">ถ้าลา 1 วัน ใส่วันเริ่มอย่างเดียวก็พอ</div>
 
-    <button class="btn" id="submitBtn">${btnText}</button>
-    <div class="msg" id="msg"></div>
-    <div class="mini" id="who"></div>
+    <div class="field">
+      <label>ประเภท</label>
+      <select id="type" disabled>
+        <option value="${type}">${type === "leave" ? "ลาเรียน" : "แจ้งเข้าสาย"}</option>
+      </select>
+      <div class="hint">ประเภทถูกกำหนดจากปุ่มที่กดในกลุ่ม</div>
+    </div>
+
+    <button id="submitBtn">ส่งข้อมูล</button>
+    <div id="msg" class="msg"></div>
   </div>
 
   <script>
-    const LIFF_ID = "${liffId}";
-    const qType = "${type}";
+    const LIFF_ID = "${process.env.LIFF_LEAVE_ID || ""}";
+    const LOCKED_DATE = "${lockedDate}";
 
-    function todayISO(){
-      const d = new Date();
-      const off = d.getTimezoneOffset();
-      const local = new Date(d.getTime() - off*60*1000);
-      return local.toISOString().slice(0,10);
+    async function initLiff() {
+      try {
+        if (!LIFF_ID) throw new Error("Missing LIFF_LEAVE_ID");
+        await liff.init({ liffId: LIFF_ID });
+        // login อัตโนมัติถ้าเปิดใน external browser
+        if (!liff.isLoggedIn()) liff.login();
+      } catch (err) {
+        console.error(err);
+        const msg = document.getElementById("msg");
+        msg.textContent = "เปิดฟอร์มไม่สำเร็จ (LIFF init error)";
+        msg.className = "msg error";
+      }
     }
 
-    async function initLiff(){
+    function showMsg(text, cls) {
       const msg = document.getElementById("msg");
-      if(!LIFF_ID){
-        msg.textContent = "ยังไม่ได้ตั้งค่า LIFF_LEAVE_ID ใน Railway Variables";
-        msg.className = "msg err";
-        return;
-      }
-
-      try{
-        await liff.init({ liffId: LIFF_ID });
-
-        // ถ้าเปิดนอก LINE แล้วไม่ได้ login ให้ login
-        if(!liff.isLoggedIn()){
-          liff.login();
-          return;
-        }
-
-        const profile = await liff.getProfile();
-        document.getElementById("who").textContent =
-          "ผู้ส่ง: " + (profile.displayName || "-") + " (" + profile.userId.slice(0,8) + "…)";
-
-        // ตั้งค่า default dates
-        document.getElementById("start_date").value = todayISO();
-
-      }catch(e){
-        console.error(e);
-        msg.textContent = "โหลด LIFF ไม่ได้ (เช็ค LIFF settings / endpoint / scope)";
-        msg.className = "msg err";
-      }
+      msg.textContent = text;
+      msg.className = "msg " + (cls || "");
     }
 
     document.getElementById("submitBtn").addEventListener("click", async () => {
       const btn = document.getElementById("submitBtn");
-      const msg = document.getElementById("msg");
 
       const name = document.getElementById("name").value.trim();
       const reason = document.getElementById("reason").value.trim();
+      const type = document.getElementById("type").value;
       const duration_type = document.getElementById("duration_type").value;
-      const days = parseFloat(document.getElementById("days").value || "0");
-      const start_date = document.getElementById("start_date").value;
-      const end_date = document.getElementById("end_date").value;
+      const days = Number(document.getElementById("days").value);
+      const leave_date = LOCKED_DATE;
 
-      if(!name || !reason){
-        msg.textContent = "กรุณากรอกชื่อและสาเหตุให้ครบ";
-        msg.className = "msg err";
-        return;
-      }
-      if(!start_date){
-        msg.textContent = "กรุณาเลือกวันที่เริ่ม";
-        msg.className = "msg err";
-        return;
-      }
-      if(!days || days < 0.5){
-        msg.textContent = "จำนวนวันต้องอย่างน้อย 0.5";
-        msg.className = "msg err";
-        return;
-      }
+      if (!name || !reason) return showMsg("กรุณากรอกชื่อและสาเหตุให้ครบถ้วน", "error");
+      if (!days || days < 0.5) return showMsg("จำนวนวันต้อง >= 0.5", "error");
 
       btn.disabled = true;
-      msg.textContent = "กำลังบันทึกข้อมูล...";
-      msg.className = "msg";
+      showMsg("กำลังบันทึกข้อมูล...", "");
 
-      try{
-        const profile = liff.isLoggedIn() ? await liff.getProfile() : null;
+      try {
+        const payload = { name, reason, type, duration_type, days, leave_date };
 
         const res = await fetch("/api/leave-from-liff", {
           method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({
-            type: qType,
-            name,
-            reason,
-            duration_type,
-            days,
-            start_date,
-            end_date: end_date || null,
-            line_user_id: profile ? profile.userId : null,
-            line_display_name: profile ? profile.displayName : null
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
         });
 
         const data = await res.json();
-        if(!res.ok) throw new Error(data.error || "save failed");
+        if (!res.ok) throw new Error(data.error || "Unknown error");
 
-        msg.textContent = "✅ บันทึกเรียบร้อย ขอบคุณครับ";
-        msg.className = "msg ok";
-
+        showMsg("บันทึกข้อมูลเรียบร้อยแล้ว ✅ ขอบคุณครับ", "success");
         setTimeout(() => {
-          if(window.liff && liff.isInClient()) liff.closeWindow();
-        }, 900);
-
-      }catch(e){
-        console.error(e);
-        msg.textContent = "❌ บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง";
-        msg.className = "msg err";
+          if (window.liff && liff.isInClient()) liff.closeWindow();
+        }, 1100);
+      } catch (err) {
+        console.error(err);
+        showMsg("บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง", "error");
         btn.disabled = false;
       }
     });
@@ -302,52 +241,32 @@ app.get("/leave", (req, res) => {
 // ---------- API รับข้อมูลจาก LIFF แล้วบันทึกลง Supabase ----------
 app.post("/api/leave-from-liff", async (req, res) => {
   try {
-    const {
-      type,
-      name,
-      reason,
-      duration_type,
-      days,
-      start_date,
-      end_date,
-      line_user_id,
-      line_display_name
-    } = req.body;
+    const { name, reason, type, duration_type, days, leave_date } = req.body;
 
-    if (!type || !name || !reason || !duration_type || !days || !start_date) {
+    if (!name || !reason || !type || !duration_type || !days || !leave_date) {
       return res.status(400).json({ error: "missing fields" });
     }
 
     const now = new Date();
-    const leaveDate = String(start_date).slice(0, 10);
 
-    const durationText =
-      duration_type === "full" ? "เต็มวัน" :
-      duration_type === "half_am" ? "ครึ่งวัน(เช้า)" :
-      duration_type === "half_pm" ? "ครึ่งวัน(บ่าย)" : duration_type;
+    // เก็บรายละเอียดเพิ่มใน reason (ถ้ายังไม่ได้เพิ่มคอลัมน์ใหม่)
+    // ถ้ามึงอยากเก็บเป็นคอลัมน์แยก เดี๋ยวกูให้ SQL ALTER TABLE ได้
+    const fullReason =
+      `ชื่อ: ${name}\n` +
+      `สาเหตุ: ${reason}\n` +
+      `รูปแบบ: ${duration_type}\n` +
+      `จำนวนวัน: ${days}\n` +
+      `วัน: ${leave_date}`;
 
-    // ✅ ไม่พึ่งคอลัมน์ใหม่: เก็บรายละเอียดทั้งหมดไว้ใน reason เดิม
-    let fullReason = "";
-    fullReason += "ชื่อ: " + name + "\\n";
-    fullReason += "สาเหตุ: " + reason + "\\n";
-    fullReason += "รูปแบบ: " + durationText + "\\n";
-    fullReason += "จำนวนวัน: " + days + "\\n";
-    fullReason += "วันที่เริ่ม: " + leaveDate + "\\n";
-    if (end_date) fullReason += "วันที่สิ้นสุด: " + String(end_date).slice(0, 10) + "\\n";
-    if (line_display_name) fullReason += "ผู้แจ้ง (LINE): " + line_display_name + "\\n";
-    if (line_user_id) fullReason += "LINE userId: " + line_user_id + "\\n";
-
-    const payload = {
-      leave_date: leaveDate,        // ใช้ start_date เป็น leave_date
-      type: type,                   // leave / late
+    const { error } = await supabase.from("leave_requests").insert({
+      leave_date,              // ใช้วันจากฟอร์ม (ล็อกเป็นวันนี้)
+      type,                    // leave / late
       reason: fullReason,
       leave_at: now.toISOString(),
-    };
-
-    const { error } = await supabase.from("leave_requests").insert(payload);
+    });
 
     if (error) {
-      console.error("supabase insert error:", error);
+      console.error("insert leave_requests error:", error);
       return res.status(500).json({ error: "supabase insert failed" });
     }
 
@@ -358,16 +277,16 @@ app.post("/api/leave-from-liff", async (req, res) => {
   }
 });
 
-// ---------- Health check ----------
+// ---------- Health ----------
 app.get("/", (req, res) => {
   res.send("LINE bot is running");
 });
 
-// ---------- ส่ง Flex เข้า group ให้กดเข้า LIFF ----------
+// ---------- cron/morning ส่งปุ่มเข้า LIFF ----------
 app.get("/cron/morning", async (req, res) => {
   try {
-    const LIFF_ID = process.env.LIFF_LEAVE_ID;
-    if (!LIFF_ID) return res.status(500).send("LIFF_LEAVE_ID not set");
+    const liffId = process.env.LIFF_LEAVE_ID;
+    if (!liffId) return res.status(500).send("Missing LIFF_LEAVE_ID");
 
     const message = {
       type: "flex",
@@ -377,25 +296,41 @@ app.get("/cron/morning", async (req, res) => {
         body: {
           type: "box",
           layout: "vertical",
+          spacing: "md",
           contents: [
             { type: "text", text: "เช็คชื่อเช้านี้ 📝", weight: "bold", size: "lg" },
-            { type: "text", text: "ถ้าจะลา หรือจะเข้าสาย ให้กดปุ่มด้านล่าง", wrap: true, size: "sm", margin: "md" }
-          ]
-        },
-        footer: {
-          type: "box",
-          layout: "vertical",
-          spacing: "sm",
-          contents: [
             {
-              type: "button",
-              style: "primary",
-              action: { type: "uri", label: "📝 แจ้งลา", uri: "https://liff.line.me/" + LIFF_ID + "?type=leave" }
+              type: "text",
+              text: "ถ้าจะลา หรือจะเข้าสาย ให้กดปุ่มด้านล่าง",
+              wrap: true,
+              size: "sm",
+              color: "#666666"
             },
             {
-              type: "button",
-              style: "secondary",
-              action: { type: "uri", label: "⏰ แจ้งเข้าสาย", uri: "https://liff.line.me/" + LIFF_ID + "?type=late" }
+              type: "box",
+              layout: "vertical",
+              spacing: "sm",
+              margin: "lg",
+              contents: [
+                {
+                  type: "button",
+                  style: "primary",
+                  action: {
+                    type: "uri",
+                    label: "📝 แจ้งลา",
+                    uri: `https://liff.line.me/${liffId}?type=leave`
+                  }
+                },
+                {
+                  type: "button",
+                  style: "secondary",
+                  action: {
+                    type: "uri",
+                    label: "⏰ แจ้งเข้าสาย",
+                    uri: `https://liff.line.me/${liffId}?type=late`
+                  }
+                }
+              ]
             }
           ]
         }
@@ -403,15 +338,13 @@ app.get("/cron/morning", async (req, res) => {
     };
 
     await client.pushMessage(process.env.LINE_GROUP_ID, message);
-    return res.send("ok");
+    res.send("ok");
   } catch (err) {
     console.error("cron/morning error:", err);
-    return res.status(500).send("error");
+    res.status(500).send("error");
   }
 });
 
-// ---------- Start server ----------
+// ---------- Start ----------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("LINE bot running on port", PORT);
-});
+app.listen(PORT, () => console.log("LINE bot running on port", PORT));

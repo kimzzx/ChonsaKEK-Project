@@ -5,7 +5,7 @@ const line = require("@line/bot-sdk");
 const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
-
+const app = express();
 
 // ---------- LINE ----------
 const config = {
@@ -36,7 +36,6 @@ app.post("/webhook", line.middleware(config), (req, res) => {
   return res.json({ status: "ok" });
 });
 
-const app = express();
 app.use(express.json());
 
 // ---------- LIFF Form Page ----------
